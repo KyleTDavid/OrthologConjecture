@@ -3,7 +3,7 @@ library(gridExtra)
 library(sfsmisc)
 library(ape)
 
-setwd("May_20")
+setwd("~/Desktop/ortholog/")
 
 #branch_model.py output
 df_raw <- read.table("masterdata_unfiltered.txt",header=F,sep='\t',row.names = NULL,stringsAsFactors = F)
@@ -11,7 +11,13 @@ names(df_raw) <- c("tree_num","tree_likelihood","node_type","MRCA","age","bl_1",
                "bl_2","dN_2","dS_2","w_2","leaves_2","delta_w")
 outgroups <- c("Bilateria", "Caenorhabditis elegans", "Chordata", "Ciona", "Ciona intestinalis B CG-2006", "Ciona savignyi", "Drosophila melanogaster", "Ecdysozoa", "Opisthokonta",
                "Saccharomyces cerevisiae", "Vertebrata", "Petromyzon marinus")
-df <- df_raw[!(df_raw$MRCA %in% outgroups),]
+
+#filter trees without duplications
+df <- df_raw[df_raw$tree_num %in% unique(df_raw[df_raw$node_type=="D",]$tree_num),]
+#filter trees without speciations
+df <- df[df$tree_num %in% unique(df[df$node_type=="S",]$tree_num),]
+
+df <- df[!(df$MRCA %in% outgroups),]
 
 #filter synonymous subsitutions > 2 to avoid saturation issues
 df <- df[df$dS_1<=2.0,]
@@ -30,9 +36,6 @@ length(unique(df$tree_num))
 #how many species?
 length(unique(df[grepl(" ", df$MRCA),]$MRCA))
 
-# #lists of nodes with both Ss and Ds
-# nodelist <- sort(unique(df$node_name))[!(sort(unique(df$node_name)) %in% c("T","S","O","N","IN"))]
-
 dfS <- df[df$node_type=="S",]
 #how many speciations?
 length(dfS$tree_num)
@@ -41,28 +44,61 @@ dfD <- df[df$node_type=="D",]
 #how many duplications?
 length(dfD$tree_num)
 
-#simulation tests
-permt <- function(dfA,dfB,var) {
-  df1 <- data.frame(dfA)
-  df2 <- data.frame(dfB)
-  df1$count = 1
-  df2$count = 2
-  df_null <- data.frame(rbind(df1,df2))
-  df_null_vals <- list()
-  for (i in 1:1000){
-    df_null$count <- 1
-    null2s<-sample((1:length(df_null[,1])),
-                   size = length(df2[,1]),replace = FALSE)
-    df_null$count<-replace(x=df_null$count,list = null2s,values=2)
-    null1 <- df_null[df_null$count==1,]
-    null2 <- df_null[df_null$count==2,]
-    df_null_vals[i] <- as.numeric(abs(mean(null1[[var]])-mean(null2[[var]])))
-    df_null_vals<-unlist(df_null_vals)
-  }
-  df_p <- sum(abs(mean(dfA[[var]]) - mean(dfB[[var]]))
-              < df_null_vals)/1000
-  return(df_p)
+#get null dataframe df with binomial variable bin
+make_null <- function(df, bin) {
+  nulldf <- df
+  var1 <- sort(unique(nulldf[[bin]]))[1]
+  var2 <- sort(unique(nulldf[[bin]]))[2]
+  null_list <- sample((1:length(nulldf[,1])), size=length(nulldf[nulldf[[bin]]==var1,][,1]), replace = F)
+  nulldf[[bin]] <- var2
+  nulldf[[bin]] <- replace(x=nulldf[[bin]],list = null_list ,values=var1)
+  return(nulldf)
 }
+
+run <- function(df, bin, var) {
+  nullval <- list()
+  bin1 <- sort(unique(df[[bin]]))[1]
+  bin2 <- sort(unique(df[[bin]]))[2]
+  for (i in 1:1000) {
+    null <- lapply(split(df, f = df$tree_num), make_null, bin=bin)
+    null <- do.call("rbind", null)
+    nullval[i] <- abs(mean(null[null[[bin]]==bin1,][[var]])-
+                        mean(null[null[[bin]]==bin2,][[var]]))
+  }
+  emp <- abs(mean(df[df[[bin]]==bin1,][[var]])-
+        mean(df[df[[bin]]==bin2,][[var]]))
+  return((sum(emp<unlist(nullval)))/1000)
+}
+
+run(df, "node_type", "delta_w")
+
+abs(mean(df[df[["node_type"]]=="D",][["delta_w"]])-
+      mean(df[df[["node_type"]]=="S",][["delta_w"]]))
+sum((0.4123797<testnulls)/1000)
+
+# 
+# #simulation tests
+# permt <- function(dfA,dfB,var) {
+#   df1 <- data.frame(dfA)
+#   df2 <- data.frame(dfB)
+#   df1$count = 1
+#   df2$count = 2
+#   df_null <- data.frame(rbind(df1,df2))
+#   df_null_vals <- list()
+#   for (i in 1:1000){
+#     df_null$count <- 1
+#     null2s<-sample((1:length(df_null[,1])),
+#                    size = length(df2[,1]),replace = FALSE)
+#     df_null$count<-replace(x=df_null$count,list = null2s,values=2)
+#     null1 <- df_null[df_null$count==1,]
+#     null2 <- df_null[df_null$count==2,]
+#     df_null_vals[i] <- as.numeric(abs(mean(null1[[var]])-mean(null2[[var]])))
+#     df_null_vals<-unlist(df_null_vals)
+#   }
+#   df_p <- sum(abs(mean(dfA[[var]]) - mean(dfB[[var]]))
+#               < df_null_vals)/1000
+#   return(df_p)
+# }
 
 #Hedge's Gs
 hg <- function(array1, array2) { return((mean(array2)-mean(array1))/(sqrt(((length(array1)*var(array1))+((length(array2)*var(array2))))
@@ -92,7 +128,7 @@ OVL <- function(df) {
 }
 
 #the good stuff
-permt(dfS,dfD,"delta_w")
+#permt(dfS,dfD,"delta_w")
 hg(dfS$delta_w, dfD$delta_w)
 OVL(df)
 ks.test(dfS$delta_w, dfD$delta_w)
@@ -103,19 +139,27 @@ sd(dfD$delta_w)
 
 #aggregate by clade
 for (clade in unique(df$MRCA)) {
-  cat(clade,"\t",permt(df[df$MRCA==clade & df$node_type=="D",],df[df$MRCA==clade & df$node_type=="S",], "delta_w"),"\n")
+  cat(clade,"\t",run(df[df$MRCA==clade,],"node_type", "delta_w"),"\n")
 }
 
-#inparalogs
+#same species paralogs
+dfD$cat <- ifelse(grepl(" ", dfD$MRCA), "IN", "OUT")
+
 dfin <- dfD[grepl(" ", dfD$MRCA),]
 mean(dfin$delta_w)
 sd(dfin$delta_w)
-#outparalogs
+#different species paralogs
 dfout <- dfD[!(grepl(" ", dfD$MRCA)),]
 mean(dfout$delta_w)
 sd(dfout$delta_w)
-permt(dfin,dfout,"delta_w")
-hg(dfout$delta_w, dfin$delta_w)
+
+run(dfD,"cat","delta_w")
+abs(mean(dfD[dfD[["cat"]]=="IN",][["delta_w"]])-
+      mean(dfD[dfD[["cat"]]=="OUT",][["delta_w"]]))
+sum((0.1410249<paralogcatnull)/1000)
+
+hg(dfD[dfD$cat=="IN",]$delta_w, dfD[dfD$cat=="OUT",]$delta_w)
+
 
 #top part of time plot with inparalogs removed
 dfout <-df[!(df$node_name=="IN"),]
@@ -155,15 +199,25 @@ mean(c(dfDp$w_1-dfDp$parent,dfDp$w_2-dfDp$parent))
 sd(c(dfDp$w_1-dfDp$parent,dfDp$w_2-dfDp$parent))
 dfp$dwp1 <- dfp$w_1 - dfp$parent
 dfp$dwp2 <- dfp$w_2 - dfp$parent
-dfdwp1 <- data.frame("node_type"=dfp$node_type,"dwp"=apply(dfp[c("dwp1","dwp2")],1,min),"cat"="min")
-dfdwp2 <- data.frame("node_type"=dfp$node_type,"dwp"=apply(dfp[c("dwp1","dwp2")],1,max),"cat"="max")
-dfdwp <- rbind(dfdwp1, dfdwp2)
-permt(dfdwp[dfdwp$node_type=="S",], dfdwp[dfdwp$node_type=="D",], "dwp")
-hg(dfdwp[dfdwp$node_type=="S",]$dwp, dfdwp[dfdwp$node_type=="D",]$dwp)
 
-permt(dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="D",], dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="S",], "dwp")
+dfdwp1 <- data.frame("node_type"=dfp$node_type,"dwp"=apply(dfp[c("dwp1","dwp2")],1,min),"cat"="min","tree_num"=dfp$tree_num, stringsAsFactors = F)
+dfdwp2 <- data.frame("node_type"=dfp$node_type,"dwp"=apply(dfp[c("dwp1","dwp2")],1,max),"cat"="max","tree_num"=dfp$tree_num, stringsAsFactors = F)
+dfdwp <- rbind(dfdwp1, dfdwp2)
+
+mean(dfdwp[dfdwp$node_type=="D",]$dwp)
+sd(dfdwp[dfdwp$node_type=="D",]$dwp)
+
+
+#permt(dfdwp[dfdwp$node_type=="S",], dfdwp[dfdwp$node_type=="D",], "dwp")
+hg(dfdwp[dfdwp$node_type=="S",]$dwp, dfdwp[dfdwp$node_type=="D",]$dwp)
+#permt(dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="D",], dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="S",], "dwp")
+run(dfdwp1, "node_type", "dwp")
+run(dfdwp2, "node_type", "dwp")
+
+
+
 hg(dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="D",]$dwp, dfdwp[dfdwp$cat=="min" & dfdwp$node_type=="S",]$dwp)
-permt(dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="D",], dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="S",], "dwp")
+#permt(dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="D",], dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="S",], "dwp")
 hg(dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="D",]$dwp, dfdwp[dfdwp$cat=="max" & dfdwp$node_type=="S",]$dwp)
 
 
@@ -192,11 +246,12 @@ axis(1,at=c(log(10),log(1),log(0.1),log(0.01),log(0.001),log(0.0001)),labels=F)
 axis(2,at=seq(0,0.5,by=0.1),labels=F)
 
 #fig2 box
-p1 <- ggplot(aes(cat, dwp), data=dfdwp[dfdwp$node_type=="S",]) + geom_boxplot(outlier.shape = NA, fill=rgb(1,0,0,0.5)) + coord_cartesian(ylim = c(-1.5,2.0)) + 
+p1 <- ggplot(aes(node_type,dwp, fill=node_type), data=dfdwp[dfdwp$cat=="min",]) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim = c(-1.5,2.0)) + 
   theme(legend.position="none",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.title = element_blank(),  axis.line = element_line(colour = "black")) 
 
-p2 <- ggplot(aes(cat, dwp), data=dfdwp[dfdwp$node_type=="D",]) + geom_boxplot(outlier.shape = NA, fill=rgb(0,0,1,0.5)) + coord_cartesian(ylim = c(-1.5,2.0)) + 
+p2 <- ggplot(aes(node_type,dwp, fill=node_type), data=dfdwp[dfdwp$cat=="max",]) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim = c(-1.5,2.0)) + 
   theme(legend.position="none",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.title = element_blank(),  axis.line = element_line(colour = "black")) 
+
 grid.arrange(p1,p2,nrow=1)
 
 #fig3 gam
@@ -227,6 +282,26 @@ p2 <- ggplot(dNdS,aes(-bl,dS)) + scale_fill_manual(values = c(rgb(1,0,0,0.5),rgb
 grid.arrange(p1,p2,nrow=2)
 
 
+
+
+
+
+#do trees with more duplication nodes have higher delta omega?
+fraction_duplications <- function(df) {
+  return(length(df[df$node_type=="D",]$node_type)/length(df$node_type))
+}
+
+test1 <- lapply(split(df, f = df$tree_num), fraction_duplications)
+test1 <- do.call("rbind",testout)
+test1 <- data.frame(tree_num=rownames(test1), percentage=test1)
+
+test2 <- aggregate(delta_w ~ tree_num, df[df$node_type=="S",], mean)
+
+merge <- merge(test1, test2)
+
+plot(merge$percentage, merge$delta_w)
+
+summary(lm(merge$percentage ~ merge$delta_w))
 
 
 
